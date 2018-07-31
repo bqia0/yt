@@ -1049,6 +1049,97 @@ def pixelize_sph_kernel_projection(
                     # now we just use the kernel projection
                     buff[xi, yi] +=  coeff * itab.interpolate(q2)
 
+
+@cython.initializedcheck(False)
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.cdivision(True)
+def pixelize_sph_kernel_projection_single(
+        np.float64_t[:, :] buff,
+        np.float64_t posx,
+        np.float64_t posy,
+        np.uint64_t  pixel_x,
+        np.uint64_t  pixel_y,
+        np.float64_t hsml,
+        np.float64_t pmass,
+        np.float64_t pdens,
+        np.float64_t quantity_to_smooth,
+        bounds,
+        kernel_name="cubic",
+        weight_field=None):
+
+    cdef np.intp_t xsize, ysize
+    cdef np.float64_t x_min, x_max, y_min, y_max, w_j, coeff
+    cdef np.int64_t xi, yi, x0, x1, y0, y1
+    cdef np.float64_t q2, posx_diff, posy_diff, ih_j2
+    cdef np.float64_t x, y, dx, dy, idx, idy, h_j2
+    cdef int index, i, j
+    cdef np.float64_t _weight_field
+
+    if weight_field is not None:
+        _weight_field = weight_field
+
+    # we find the x and y range over which we have pixels and we find how many
+    # pixels we have in each dimension
+    xsize, ysize = buff.shape[0], buff.shape[1]
+    x_min = bounds[0]
+    x_max = bounds[1]
+    y_min = bounds[2]
+    y_max = bounds[3]
+
+    dx = (x_max - x_min) / xsize
+    dy = (y_max - y_min) / ysize
+
+    idx = 1.0/dx
+    idy = 1.0/dy
+
+    if kernel_name not in kernel_tables:
+        kernel_tables[kernel_name] = SPHKernelInterpolationTable(kernel_name)
+    cdef SPHKernelInterpolationTable itab = kernel_tables[kernel_name]
+
+    with nogil:
+        # loop through every particle
+
+        # here we find the pixels which this particle contributes to
+        # x0 = <np.int64_t> ( (posx[j] - hsml[j] - x_min) * idx)
+        # x1 = <np.int64_t> ( (posx[j] + hsml[j] - x_min) * idx)
+        # x0 = iclip(x0-1, 0, xsize)
+        # x1 = iclip(x1+1, 0, xsize)
+
+        # y0 = <np.int64_t> ( (posy[j] - hsml[j] - y_min) * idy)
+        # y1 = <np.int64_t> ( (posy[j] + hsml[j] - y_min) * idy)
+        # y0 = iclip(y0-1, 0, ysize)
+        # y1 = iclip(y1+1, 0, ysize)
+
+        # we set the smoothing length squared with lower limit of the pixel
+        h_j2 = fmax(hsml*hsml, dx*dy)
+        ih_j2 = 1.0/h_j2
+
+        w_j = pmass / pdens / hsml**3
+        if weight_field is None:
+            coeff = w_j * hsml * quantity_to_smooth
+        else:
+            coeff = w_j * hsml * quantity_to_smooth * _weight_field
+
+        # BELOW IS SINGLE PIXEL SINGLE PARTICLE INTERP CODE
+        x = (pixel_x + 0.5) * dx + x_min
+
+        posx_diff = posx - x
+        posx_diff = posx_diff * posx_diff
+
+        y = (pixel_y + 0.5) * dy + y_min
+
+        posy_diff = posy - y
+        posy_diff = posy_diff * posy_diff
+
+        q2 = (posx_diff + posy_diff) * ih_j2
+
+        if q2 < 1 and posy_diff <= h_j2 and posx_diff <= h_j2:
+            # see equation 32 of the SPLASH paper
+            # now we just use the kernel projection
+            buff[pixel_x, pixel_y] +=  coeff * itab.interpolate(q2)
+
+
 @cython.initializedcheck(False)
 @cython.boundscheck(False)
 @cython.wraparound(False)
